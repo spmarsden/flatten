@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+# Takes a directory structure and flattens it. eg:
+#   ./
+#       dir0/
+#           dir01/
+#               dir010/
+#                   file0100
+#               dir011/
+#               file010
+#           dir02/
+#               file020
+#               file021
+# after running `flatten ./dir0` becomes:
+#   ./
+#       dir0/
+#           dir01_dir010_file0100
+#           dir01_file010
+#           dir02_file020
+#           dir02_file021
+#
+# Status codes:
+#   0 = All good,
+#   1 = Unused,
+#   2 = Invalid arguments,
+#   3 = Move error.
+
+
+## CLI Arguments ###############################################################
+
+# Check the correct number were given.
+if test "$#" -ne 1; then
+    echo "Exactly one arguments required. $# given." 1>&2
+    exit 2
+fi
+
+# Get the absolute path to the given directories.
+FLATTEN_DIR=`realpath "$1"`
+
+# Check that the input directory exists.
+if ! test -d "$FLATTEN_DIR"; then
+    echo "No such directory: $FLATTEN_DIR" 1>&2
+    exit 2
+fi
+
+
+## Move the Files ##############################################################
+
+# Get the full path ov every file in the input directory regardless of depth and
+# order them alphabetically.
+INPUT_FILES=`find $FLATTEN_DIR -type f | sort -t '\0' -n`
+
+# Storage for counting the number of files that couldn't be moved.
+ERROR_COUNT=0
+
+# Copy each of the files.
+for FILE_IN in $INPUT_FILES; do
+
+    # Get just the part of the directory that is being flattened.
+    PATH_TO_FLATTEN=${FILE_IN:${#FLATTEN_DIR}+1}
+    
+    # Replace / with _ in order to create the new file name and add the output
+    # path to the start.
+    FILE_OUT="$FLATTEN_DIR/${PATH_TO_FLATTEN//\//_}"
+
+    # Check if the file needs to be moved.
+    if [ "$FILE_IN" = "$FILE_OUT" ]; then
+        continue
+    fi
+
+    # Tell the user where we're up to.
+    echo $FILE_OUT
+
+    # Move the file.
+    if ! mv $FILE_IN $FILE_OUT; then
+        echo "Could not move file." 1>&2
+        ERROR_COUNT=`$ERROR_COUNT + 1`
+    fi
+
+done
+
+
+## Remove Empty Directory Structure ############################################
+
+# Recursively delete directories that are now empty.
+while true; do
+
+    # Get the lowest level that's empty.
+    EMPTY_DIRS=`find "$FLATTEN_DIR" -type d -empty | sort -t '\0' -n`
+    
+    # Exit this loop if there are no more empty directories returned, or if the
+    # directory that is being flattened is returned.
+    if [ -z "$EMPTY_DIRS" ] || [ "$EMPTY_DIRS" == "$FLATTEN_DIR" ]; then
+        break
+    fi
+    
+    # Delete each of the empty directories.
+    for DIR in $EMPTY_DIRS; do
+        rmdir $DIR
+    done
+
+    # This may mean that there are directories that are now empty, so repeate
+    # this deletion procedure.
+done
+
+
+## Exit ########################################################################
+
+# If there were any error codes, output that.
+if test $ERROR_COUNT -gt 0; then
+    echo "$ERROR_COUNT files failed to copy." 1>&2
+    exit 3
+fi
